@@ -1,30 +1,192 @@
 ---
-title: "Practical Machine Learning Course Project"
+title: 'Human Activity Recognition: Weight Lifting Execution Predictive Model'
 author: "J2"
-date: "May 9, 2016"
-output: html_document
+date: "May 8, 2016"
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+  pdf_document: default
 ---
+```{r setup, include=FALSE, echo=FALSE}
+library(car)
+library(caret)
+library(corrplot)
+library(dplyr)
+library(gvlma)
+library(knitr)
+library(kfigr)
+library(printr)
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+read_chunk("0.0 readData.R")
+read_chunk("1.0 splitData.R")
+read_chunk("2.0 exploreData.R")
+read_chunk("3.0 preProcessData.R")
+read_chunk("4.0 modelData.R")
+read_chunk("5.0 baseModels.R")
+read_chunk("5.1 ensemble1.R")
+read_chunk("5.2 ensemble2.R")
+read_chunk("6.0 compareModels.R")
+read_chunk("7.0 validation.R")
+
+
+knitr::opts_chunk$set(fig.path = "../figures/", fig.height = 4, fig.width = 10, echo=TRUE, warning=FALSE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r environment, echo = FALSE, message = F, eval = T}
+<<environment>>
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r loadModels, echo = F, message = F, eval = T, cache = T}
+load("models.RData")
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+#Introduction
+Human activity recognition research has traditionally focused on discriminating between different activities, i.e. to predict "which" activity was performed at a specific point in time.  Research conducted by Velloso, Bulling, Gellersen, Ugulino, and Fuks investigated the degree to which qualitative activity recognition could detect "how (well)" an activity was performed.  
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl (UDBC) in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes.[1] 
+
+Sensors mounted in the users’ glove, armband, lumbar belt and dumbbell connected to inertial measurement units (IMU) provided three-axes acceleration, gyroscope and magnetometer data.  
+
+The purpose of this project is to develop a predictive model that interprets the data and correctly classifies the participants’ execution of the dumbbell curl into one of the 5 classes.
+
+#Study Design and Cross Validation
+The dataset, provided courtesy of Velloso, Bulling, Gellersen, Ugulino, and Fuks, is available on the Human Activity Recognition Project webpage on the Groupware@LES website. It was downloaded below.
+```{r readData, echo = TRUE, message = F, eval = T}
+<<readData>>
+```
+
+The test set was set aside and designated "validation set" for the purposes of this study.  A random sampling of 70%  of The training data set was designated for training and the remaining 30% was set aside for testing purposes.
+
+```{r splitData, echo = TRUE, message = F, eval = T}
+<<splitData>>
+```
+
+Models were trained on the training data using 10-fold repeated cross-validation, repeated 3 times. Selected prediction models were then evaluated on the test data set.  The best performing prediction model was then applied to the validation set for final submission. 
+
+#Data Analysis
+The following code extracts select summary data on the new training set.
+```{r exploreData, echo = TRUE, message = F, eval = T, results='hide'}
+<<exploreData>>
+```
+
+There were `r observations` observations with `r variables` predictor and non-predictor variables (Appendix:`r figr("colNames", TRUE, type="Table")`) in the training dataset. For the purposes of this analysis, X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window, and classe (the dependent variable) were considered non-predictor variables.  The predictor variables were comprised of the Euler angles (roll, pitch and yaw), as well as the raw accelerometer, gyroscope and magnetometer readings. For the Euler angles of each of the four sensors eight features were calculated: mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness. Of the remaining 152 predictor variables, 
+
+Of particular note was that there were  `r numNaVars` variables that contained a minimum of `r minNaVars` (`r pctNaVars` %) NA values across all observations in the training set.  
+
+#Data PreProcessing
+Standardization of variables is a common requirement for many machine learning classifiers.  Non-predictor and variables with high NA values were removed and the remaining predictor variables in test, training and validation sets were centered and scaled.  The test and validation sets were centered and scaled based upon the mean and standard deviations from the training set.  
+
+```{r centerScale, echo = TRUE, message = F, eval = T}
+<<centerScale>>
+```
+
+Next, the variables which contained over 80% NA values over the training set were identified.  Those variables were then removed from the training, test, and validation sets.
+
+```{r cleanData, echo = TRUE, message = F, eval = T, results='hide'}
+<<cleanData>>
+```
+
+The pre-processed training set contained `r trainObservations` observations and `r trainVariables` variables.  The following matrix illuminates the correlation among the remaining `r trainVariables` predictor variables.
+
+```{r corrPlot, echo = TRUE, message = F, eval = T, fig.height = 10, fig.width = 10}
+<<corrPlot>>
+```
+`r figr("corrPlot", TRUE, type="Figure")`: Correlation Matrix
+
+The data among the belt measurements show some correlation, as do the data among the dumbbell measurements.  Given the nature of the movements among the sensors, this would be expected. That said, the independent variables were by and large independent.  
+
+#Model Selection
+An ensemble learning approach was pursued, and as such, a diversity of models was evaluated. A base set of 28 models were selected from 10 categories. The code used to train these models can be found in the appendix (`r figr("modelData", TRUE, type="Code")`). **Ensemble 1** was comprised of the models from the base set, with the exception of rda, parRF, mlp, J48, and JRip, which were not included due to performance and technical constraints.  **Ensemble 2** was comprised of the best performing models from the base set. The best of all models evaluated was then applied to the validation set for final evaluation and submission.  
+
+##Base Models
+The following table summarizes the base models selected and their performance.  Models included in the two ensemble models are designated as such.
+
+```{r formatSummary, echo = FALSE, message = F, eval = T, cache=TRUE}
+<<formatSummary>>
+```
+
+`r figr("printModels", TRUE, type="Table")`: Model Selection and Performance
+```{r printModels, echo = FALSE, message = F, eval = T}
+knitr::kable(modelSummary, digits = 4)
+```
+
+##Ensemble 1
+The following code prepares and executes ensemble 1 on the test set.
+```{r ensemble1, echo = T, message = F, eval = T, cache=TRUE}
+<<ensemble1>>
+```
+
+This ensemble had an accuracy of **`r round(max(model.ensemble1$results[,2]),5)`** and a kappa value of **`r round(max(model.ensemble1$results[,3]),5)`**.  The following summarizes the ensemble performance.
+
+```{r model.ensemble1, echo = T, message = F, eval = T, cache=TRUE}
+model.ensemble1$finalModel
+```
+
+##Ensemble 2
+The following code prepares and executes ensemble 2 on the test set.
+```{r ensemble2, echo = T, message = F, eval = T, cache=TRUE}
+<<ensemble2>>
+```
+
+This ensemble had an accuracy of **`r round(max(model.ensemble2$results[,2]),5)`** and a kappa value of **`r round(max(model.ensemble2$results[,3]),5)`**.  The following summarizes the ensemble performance.
+
+```{r model.ensemble2, echo = T, message = F, eval = T, cache=TRUE}
+model.ensemble2$finalModel
+```
+
+#Model Comparison
+Of the 30 models evaluated, eXtreme Gradient Boosting (xgbTree), Parallel Random Forest (parRF), Random Forest (rf), Weighted Subspace Random Forest (wsrf), C5.0, ensemble1, and ensemble2 models scored accuracies of 99% or greater.  The following code prepares the comparison of the models across all resamples.
+```{r compareModels, echo = T, message = F, eval = T, cache=TRUE}
+<<compareModels>>
+```
+
+
+The following table summarizes the performance for each model across all resamples.
+```{r summarizeModels, echo = T, message = F, eval = T, cache=TRUE}
+summary(comparison)
+```
+
+The following boxplots graphically compare the models across resamples.
+```{r boxPlots, echo = T, message = F, eval = T, cache=TRUE}
+<<boxPlots>>
+```
+
+#Results
+Given its slighly **superior accuracy (`r round(max(model.ensemble1$results[,2]),5)`)** and lower **out of sample error rate (`r 1-round(max(model.ensemble1$results[,2]),5)`)**, **ensemble 1** was selected for validation and submission. The following code prepares and executes ensemble 1 model on the validation set and calculates its predictions.
+
+```{r validation, echo = T, message = F, eval = T, cache=TRUE}
+<<validation>>
+```
+
+The predictions are as follows.
+```{r solution, echo = T, message = F, eval = T}
+solution
+```
+
+#References
+1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+2. Aly, M. (2005). Survey on Multiclass Classification Methods. November.
+3. Fernandez-Delgado, M., Cernadas, E., & Barro, S. (2014). Do we Need Hundreds of Classifiers to Solve Real World Classification Problems? S˜ao Geraldo: Journal of Machine Learning Research 1.
+
+
+
+#Appendix
+
+##Tables
+`r figr("colNames", TRUE, type="Table")`: Weight Lifting Exercise Dataset Variables
+```{r colNames, echo = FALSE, message = F, eval = T, anchor = "Table"}
+names(trainFile)
+```
+
+`r figr("trainingVariables", TRUE, type="Table")`: Selected Predictor Variables
+```{r trainingVariables, echo = FALSE, message = F, eval = T, anchor = "Table"}
+names(trainDataCS)
+```
+
+##Code
+`r figr("modelData", TRUE, type="Code")`: Code for Training Models
+```{r modelDataAppendix, echo = TRUE, message = F, eval = F}
+<<modelData>>
+```
